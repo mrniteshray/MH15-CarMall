@@ -1,6 +1,5 @@
 package xcom.niteshray.apps.mh15cars.mh15carsmall
 
-
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -9,21 +8,19 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.os.Bundle
 import android.provider.MediaStore
+import android.util.DisplayMetrics
+import android.util.Log
 import android.widget.Button
-import android.widget.EditText
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import dev.eren.removebg.RemoveBg
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
     private lateinit var previewImage: ImageView
-    private lateinit var showroomName: EditText
-    private lateinit var showroomAddress: EditText
     private var carBitmap: Bitmap? = null
     private var processedBitmap: Bitmap? = null
 
@@ -65,7 +62,11 @@ class MainActivity : AppCompatActivity() {
                     processedBitmap = output
                     // Background remove hone ke baad banner generate karo
                     val banner = generateBanner(processedBitmap!!)
-                    previewImage.setImageBitmap(banner)
+                    if (banner != null) {
+                        previewImage.setImageBitmap(banner)
+                    } else {
+                        Toast.makeText(this@MainActivity, "Failed to generate banner", Toast.LENGTH_SHORT).show()
+                    }
                 } else {
                     Toast.makeText(this@MainActivity, "Failed to remove background", Toast.LENGTH_SHORT).show()
                 }
@@ -73,45 +74,78 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun generateBanner(carImage: Bitmap): Bitmap {
-        // Template image load karo (res/drawable mein banner_template.png hona chahiye)
-        val template = BitmapFactory.decodeResource(resources, R.drawable.template)
-        val banner = Bitmap.createBitmap(template.width, template.height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(banner)
+    private fun generateBanner(carImage: Bitmap): Bitmap? {
+        try {
+            // Device ke screen size ke hisaab se target dimensions set karo
+            val displayMetrics = DisplayMetrics()
+            windowManager.defaultDisplay.getMetrics(displayMetrics)
+            val targetWidth = displayMetrics.widthPixels  // Screen width
+            val targetHeight = (targetWidth * 0.75).toInt()  // Aspect ratio 4:3
 
-        // Template draw karo
-        canvas.drawBitmap(template, 0f, 0f, null)
+            // Template image load karo with downscaling
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true  // Sirf dimensions check karo
+            }
+            BitmapFactory.decodeResource(resources, R.drawable.template, options)
 
-        // Car image ko scale aur center mein draw karo
-        val scaledCar = Bitmap.createScaledBitmap(carImage, template.width / 2, template.height / 2, true)
-        val carX = (template.width - scaledCar.width) / 2f
-        val carY = (template.height - scaledCar.height) / 2f
+            // Calculate inSampleSize for downscaling
+            options.inSampleSize = calculateInSampleSize(options, targetWidth, targetHeight)
+            options.inJustDecodeBounds = false  // Ab actual image load karo
+            val template = BitmapFactory.decodeResource(resources, R.drawable.template, options)
+                ?: return null  // Agar template load nahi hua toh null return karo
 
-        // Paint object for shadow effect
-        val paint = Paint().apply {
-            isAntiAlias = true
-            setShadowLayer(10f, 5f, 5f, Color.BLACK)  // Shadow effect for natural look
+            // Template ko target size pe scale karo
+            val scaledTemplate = Bitmap.createScaledBitmap(template, targetWidth, targetHeight, true)
+
+            // Banner bitmap banaye
+            val banner = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(banner)
+
+            // Template draw karo
+            canvas.drawBitmap(scaledTemplate, 0f, 0f, null)
+
+            // Car image ko scale aur center mein draw karne ke liye
+            val scaledCar = Bitmap.createScaledBitmap(carImage, targetWidth / 2, targetHeight / 2, true)
+            val carX = (targetWidth - scaledCar.width) / 2f
+            val carY = (targetHeight - scaledCar.height) / 2f
+
+            // Paint object for shadow effect
+            val paint = Paint().apply {
+                isAntiAlias = true
+                setShadowLayer(10f, 5f, 5f, Color.BLACK)
+            }
+            canvas.drawBitmap(scaledCar, carX, carY, paint)
+
+
+            // Memory free karne ke liye
+            template.recycle()
+            scaledTemplate.recycle()
+            scaledCar.recycle()
+
+            return banner
+        } catch (e: OutOfMemoryError) {
+            Toast.makeText(this, "Memory error: Try a smaller template", Toast.LENGTH_SHORT).show()
+            return null
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.d("Imageerror","Error: ${e.message}")
+            return null
         }
-        canvas.drawBitmap(scaledCar, carX, carY, paint)
+    }
 
-        // Showroom name aur address draw karo
-        val textPaint = Paint().apply {
-            color = Color.WHITE
-            textSize = 50f
-            isAntiAlias = true
-            textAlign = Paint.Align.CENTER
+    // Helper function to calculate inSampleSize for downscaling
+    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val (height: Int, width: Int) = options.run { outHeight to outWidth }
+        var inSampleSize = 1
+
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight: Int = height / 2
+            val halfWidth: Int = width / 2
+
+            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                inSampleSize *= 2
+            }
         }
-
-        val name = " "
-        val address = " "
-
-        // Showroom name upar
-        canvas.drawText(name, template.width / 2f, 100f, textPaint)
-
-        // Address neeche
-        textPaint.textSize = 40f
-        canvas.drawText(address, template.width / 2f, template.height - 50f, textPaint)
-
-        return banner
+        return inSampleSize
     }
 }
